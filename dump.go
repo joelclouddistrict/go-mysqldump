@@ -13,7 +13,7 @@ import (
 type table struct {
 	Name   string
 	SQL    string
-	Values string
+	Values []string
 }
 
 type dump struct {
@@ -58,8 +58,8 @@ DROP TABLE IF EXISTS {{ .Name }};
 
 LOCK TABLES {{ .Name }} WRITE;
 /*!40000 ALTER TABLE {{ .Name }} DISABLE KEYS */;
-{{ if .Values }}
-INSERT INTO {{ .Name }} VALUES {{ .Values }};
+{{ $save := . }}{{ range .Values }}
+INSERT INTO {{ $save.Name }} VALUES {{ . }};
 {{ end }}
 /*!40000 ALTER TABLE {{ .Name }} ENABLE KEYS */;
 UNLOCK TABLES;
@@ -186,21 +186,21 @@ func createTableSQL(db *sql.DB, name string) (string, error) {
 	return table_sql.String, nil
 }
 
-func createTableValues(db *sql.DB, name string) (string, error) {
+func createTableValues(db *sql.DB, name string) ([]string, error) {
 	// Get Data
 	rows, err := db.Query("SELECT * FROM " + name)
 	if err != nil {
-		return "", err
+		return []string{}, err
 	}
 	defer rows.Close()
 
 	// Get columns
 	columns, err := rows.Columns()
 	if err != nil {
-		return "", err
+		return []string{}, err
 	}
 	if len(columns) == 0 {
-		return "", errors.New("No columns in table " + name + ".")
+		return []string{}, errors.New("No columns in table " + name + ".")
 	}
 
 	// Read data
@@ -219,7 +219,7 @@ func createTableValues(db *sql.DB, name string) (string, error) {
 
 		// Read data
 		if err := rows.Scan(ptrs...); err != nil {
-			return "", err
+			return []string{}, err
 		}
 
 		dataStrings := make([]string, len(columns))
@@ -235,7 +235,20 @@ func createTableValues(db *sql.DB, name string) (string, error) {
 		data_text = append(data_text, "("+strings.Join(dataStrings, ",")+")")
 	}
 
-	return strings.Join(data_text, ","), rows.Err()
+	values := []string{}
+
+	// Split the slice into batches of 100 INSERT values
+	batch := 100
+	for i := 0; i < len(data_text); i += batch {
+		j := i + batch
+		if j > len(data_text) {
+			j = len(data_text)
+		}
+
+		values = append(values, strings.Join(data_text[i:j], ",")) // Process the batch.
+	}
+
+	return values, rows.Err()
 }
 
 func escapeString(str string) string {
